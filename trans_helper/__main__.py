@@ -39,7 +39,29 @@ def read_zusi_file(f, contexts, keep_order = False):
 
 def read_po_file(f):
   result = []
-  
+
+  current_context = ''
+  entries_under_construction = []
+
+  for line in f:
+    line = line.strip("\r\n")
+    if line.startswith("#"):
+      if line.startswith("#. :src:"):
+        key, extras = line[9:].split('          ')
+        extras = extras.split(',')
+        entries_under_construction.append(TranslationEntry(key, "", "", int(extras[0]), int(extras[1]), int(extras[2]), int(extras[3])))
+    elif line.startswith("msgctxt"):
+      current_context = line[9:-1].replace('\\"', '"')
+    elif line.startswith("msgstr"):
+      for entry in entries_under_construction:
+        entry.value = line[8:-1].replace('\\"', '"')
+        entry.context = current_context
+      result.extend(entries_under_construction)
+    elif line == '':
+      entries_under_construction = []
+      current_context = ''
+
+  return dict(((item.key, item.context), item) for item in result)
 
 def read_context_file(f, contexts):
   for line in f:
@@ -71,7 +93,7 @@ if __name__ == '__main__':
 
   if args.mode == 'zusi2po' and args.translation is None:
     parser.error('Missing existing translation file (--translation/-t)')
-  if args.mode == 'porefresh' and args.pofile is None:
+  if args.mode == 'porefresh' and args.po_file is None:
     parser.error('Missing existing translation file (--po-file/-p)')
 
   contexts = {}
@@ -80,13 +102,11 @@ if __name__ == '__main__':
       read_context_file(context_file[0], contexts)
 
   master_file = read_zusi_file(args.master, contexts, True)
-  # Print the entry for the empty string first
-  master_file.insert(0, TranslationEntry("", "", "", False, False, 0, 0))
 
   if args.mode == 'zusi2po':
     translation_file = read_zusi_file(args.translation, {})
-  elif args.mode == 'porefresh':
-    po_file = read_po_file(args.pofile)
+  elif args.mode in ['porefresh', 'po2zusi']:
+      po_file = read_po_file(args.po_file)
 
   outfile = args.out
 
@@ -98,6 +118,9 @@ if __name__ == '__main__':
       master_entries_by_value[(entry.value, entry.context)] = [entry]
 
   if args.mode in ['zusi2pot', 'zusi2po']:
+    # Print the entry for the empty string first
+    master_file.insert(0, TranslationEntry("", "", "", False, False, 0, 0))
+
     # Keep the ordering of the master file.
     for master_entry in master_file:
       try:
@@ -137,3 +160,9 @@ if __name__ == '__main__':
         outfile.write("\"Content-Type: text/plain; charset=UTF-8\\n\"" + os.linesep)
 
       outfile.write(os.linesep)
+
+  elif args.mode == 'po2zusi':
+    for master_entry in master_file:
+      translated_entry = po_file[(master_entry.key, master_entry.context)]
+      outfile.write("%s = %s%s%s%s%s" % (master_entry.key, " " * translated_entry.leftspaces, "'" if translated_entry.leftquote else "",
+          translated_entry.value, "'" if translated_entry.rightquote else "", " " * translated_entry.rightspaces) + os.linesep)
