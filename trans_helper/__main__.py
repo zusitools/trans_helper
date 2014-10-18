@@ -23,9 +23,10 @@ def read_zusi_file(f, contexts, keep_order = False):
       continue
     leftspaces = len(value) - len(value.lstrip(" "))
     rightspaces = len(value) - len(value.rstrip(" "))
+    value = value.strip(" ")
     leftquote = len(value) > 0 and value[0] == "'"
     rightquote = len(value) > 1 and value[len(value) - 1] == "'"
-    value = value.strip(" '")
+    value = value.strip("'")
     try:
       context = contexts[key]
     except KeyError:
@@ -51,16 +52,20 @@ def read_po_file(f):
         extras = extras.split(',')
         entries_under_construction.append(TranslationEntry(key, "", "", int(extras[0]), int(extras[1]), int(extras[2]), int(extras[3])))
     elif line.startswith("msgctxt"):
-      current_context = line[9:-1].replace('\\"', '"')
+      for entry in entries_under_construction:
+        entry.context = line[9:-1].replace('\\"', '"')
     elif line.startswith("msgstr"):
       for entry in entries_under_construction:
         entry.value = line[8:-1].replace('\\"', '"')
-        entry.context = current_context
-      result.extend(entries_under_construction)
+    elif line.startswith('"'):
+      for entry in entries_under_construction:
+        entry.value += line[1:-1].replace('\\"', '"')
     elif line == '':
+      result.extend(entries_under_construction)
       entries_under_construction = []
       current_context = ''
 
+  result.extend(entries_under_construction)
   return dict(((item.key, item.context), item) for item in result)
 
 def read_context_file(f, contexts):
