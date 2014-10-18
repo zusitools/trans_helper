@@ -41,7 +41,14 @@ def read_zusi_file(f, contexts, keep_order = False):
 def read_po_file(f):
   result = []
 
+  MODE_MSGID = 1
+  MODE_MSGSTR = 2
+  MODE_MSGCTXT = 3
+
+  current_mode = 0
+  current_msgid = ''
   current_context = ''
+  current_value = ''
   entries_under_construction = []
 
   for line in f:
@@ -51,21 +58,43 @@ def read_po_file(f):
         key, extras = line[9:].split('          ')
         extras = extras.split(',')
         entries_under_construction.append(TranslationEntry(key, "", "", int(extras[0]), int(extras[1]), int(extras[2]), int(extras[3])))
+    elif line.startswith("msgid"):
+      current_msgid = line[7:-1].replace('\\"', '"')
+      current_mode = MODE_MSGID
     elif line.startswith("msgctxt"):
-      for entry in entries_under_construction:
-        entry.context = line[9:-1].replace('\\"', '"')
+      current_context = line[9:-1].replace('\\"', '"')
+      current_mode = MODE_MSGCTXT
     elif line.startswith("msgstr"):
-      for entry in entries_under_construction:
-        entry.value = line[8:-1].replace('\\"', '"')
+      current_value = line[8:-1].replace('\\"', '"')
+      current_mode = MODE_MSGSTR
     elif line.startswith('"'):
-      for entry in entries_under_construction:
-        entry.value += line[1:-1].replace('\\"', '"')
+      string = line[1:-1].replace('\\"', '"')
+      if current_mode == MODE_MSGID:
+        current_msgid += string
+      elif current_mode == MODE_MSGCTXT:
+        current_context += string
+      elif current_mode == MODE_MSGSTR:
+        current_value += string
     elif line == '':
+      # Do not write the special translation (charset etc.) for msgid ""
+      if current_msgid != '':
+        for entry in entries_under_construction:
+          entry.context = current_context
+          entry.value = current_value
       result.extend(entries_under_construction)
       entries_under_construction = []
+      current_mode = 0
+      current_msgid = ''
       current_context = ''
+      current_value = ''
 
+  # Write last entry even if the file does not end with a blank line.
+  if current_msgid != '':
+    for entry in entries_under_construction:
+      entry.context = current_context
+      entry.value = current_value
   result.extend(entries_under_construction)
+
   return dict(((item.key, item.context), item) for item in result)
 
 def read_context_file(f, contexts):
