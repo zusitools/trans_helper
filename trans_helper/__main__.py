@@ -1,0 +1,139 @@
+import argparse
+import myargparse
+import os
+import sys
+
+class TranslationEntry:
+  def __init__(self, key, value, context, leftquote, rightquote, leftspaces, rightspaces):
+    self.key = key
+    self.value = value
+    self.context = context
+    self.leftquote = leftquote
+    self.rightquote = rightquote
+    self.leftspaces = leftspaces
+    self.rightspaces = rightspaces
+
+def read_zusi_file(f, contexts, keep_order = False):
+  """Returns either a dict indexed by key (if keep_order == False) or a list of translation entries in the specified file."""
+  result = []
+  for line in f:
+    try:
+      (key, value) = line.strip("\r\n").split(" = ", 1)
+    except ValueError:
+      continue
+    leftspaces = len(value) - len(value.lstrip(" "))
+    rightspaces = len(value) - len(value.rstrip(" "))
+    leftquote = len(value) > 0 and value[0] == "'"
+    rightquote = len(value) > 1 and value[len(value) - 1] == "'"
+    value = value.strip(" '")
+    try:
+      context = contexts[key]
+    except KeyError:
+      context = ''
+    result.append(TranslationEntry(key, value, context, leftquote, rightquote, leftspaces, rightspaces))
+  f.close()
+  if keep_order:
+    return result
+  else:
+    return dict((item.key, item) for item in result)
+
+def read_po_file(f):
+  result = []
+  
+
+def read_context_file(f, contexts):
+  for line in f:
+    if line.strip(" \r\n") == '' or line.startswith('#'):
+      continue
+    key, context = line.strip("\r\n").split(" ", 1)
+    contexts[key] = context
+
+def write_zusi_file(f, translation_entries):
+  for entry in translation_entries:
+    f.write('%s = %d%s%s%d%s\n' % (entry.key, " " * entry.leftspaces, "'" if entry.leftquote else '', entry.value, "'" if entry.rightquote else '', " " * entry.rightspaces))
+  f.close()
+
+if __name__ == '__main__':
+  parser = argparse.ArgumentParser(description='Translation helper for Zusi translation files.')
+  parser.add_argument('mode', choices=['zusi2pot', 'zusi2po', 'po2zusi', 'porefresh'])
+  parser.add_argument('--master', '-m', type=myargparse.CodecFileType('r', 'ISO-8859-1'),
+      help='Zusi master translation file (deutsch.txt). '
+      + 'This is the file from which translation keys and their order will be taken.', required=True)
+  parser.add_argument('--translation', '-t', type=myargparse.CodecFileType('r'),
+      help='Existing Zusi translation file of the target language.')
+  parser.add_argument('--po-file', '-p', type=myargparse.CodecFileType('r'),
+      help='Existing PO translation file of the target language.')
+  parser.add_argument('--context', '-c', action='append', nargs='*', type=myargparse.CodecFileType('r'),
+      help='List of context entries (disambiguation of identical source texts).')
+  parser.add_argument('--out', '-o', type=myargparse.CodecFileType('w'), help='Output file', required=True)
+
+  args = parser.parse_args()
+
+  if args.mode == 'zusi2po' and args.translation is None:
+    parser.error('Missing existing translation file (--translation/-t)')
+  if args.mode == 'porefresh' and args.pofile is None:
+    parser.error('Missing existing translation file (--po-file/-p)')
+
+  contexts = {}
+  if args.context is not None:
+    for context_file in args.context:
+      read_context_file(context_file[0], contexts)
+
+  master_file = read_zusi_file(args.master, contexts, True)
+  # Print the entry for the empty string first
+  master_file.insert(0, TranslationEntry("", "", "", False, False, 0, 0))
+
+  if args.mode == 'zusi2po':
+    translation_file = read_zusi_file(args.translation, {})
+  elif args.mode == 'porefresh':
+    po_file = read_po_file(args.pofile)
+
+  outfile = args.out
+
+  master_entries_by_value = {}
+  for entry in master_file:
+    try:
+      master_entries_by_value[(entry.value, entry.context)].append(entry)
+    except:
+      master_entries_by_value[(entry.value, entry.context)] = [entry]
+
+  if args.mode in ['zusi2pot', 'zusi2po']:
+    # Keep the ordering of the master file.
+    for master_entry in master_file:
+      try:
+        all_entries = master_entries_by_value[(master_entry.value, master_entry.context)]
+      except KeyError:
+        continue
+
+      del master_entries_by_value[(master_entry.value, master_entry.context)]
+
+      for e in all_entries:
+        outfile.write("#. :src: %s          %d,%d,%d,%d%s" % (e.key, e.leftquote, e.rightquote, e.leftspaces, e.rightspaces, os.linesep))
+      if len(master_entry.context):
+        outfile.write("msgctxt \"%s\"" % master_entry.context.replace('"', '\\"') + os.linesep)
+      outfile.write('msgid "%s"' % master_entry.value.replace('"', '\\"') + os.linesep)
+      if args.mode == 'zusi2pot':
+        outfile.write('msgstr ""' + os.linesep)
+      else:
+        possible_translation_entries = [translation_file[entry.key] for entry in all_entries if entry.key in translation_file]
+        possible_translations = set([entry.value for entry in possible_translation_entries])
+        if len(possible_translations) == 1:
+          outfile.write('msgstr "%s"' % next(iter(possible_translations)).replace('"', '\\"') + os.linesep)
+        else:
+          print("Error: %d translations found for text '%s', context '%s', with the following set of keys:"
+              % (len(possible_translations), master_entry.value, master_entry.context))
+          for entry in all_entries:
+            print("  %s" % entry.key)
+          if len(possible_translations) > 0:
+            print("Possible translations:")
+            for possible_translation in possible_translations:
+              print("  '%s'" % possible_translation)
+              for entry in possible_translation_entries:
+                if entry.value == possible_translation:
+                  print("    %s" % entry.key)
+          sys.exit(3)
+
+      if master_entry.key == '':
+        outfile.write("\"Content-Type: text/plain; charset=UTF-8\\n\"" + os.linesep)
+
+      outfile.write(os.linesep)
