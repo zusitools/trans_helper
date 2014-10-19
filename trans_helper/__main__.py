@@ -4,7 +4,7 @@ import os
 import sys
 
 class TranslationEntry:
-  def __init__(self, key, value, context, leftquote, rightquote, leftspaces, rightspaces):
+  def __init__(self, key, value='', context='', leftquote='', rightquote='', leftspaces=0, rightspaces=0):
     self.key = key
     self.value = value
     self.context = context
@@ -55,9 +55,7 @@ def read_po_file(f):
     line = line.strip("\r\n")
     if line.startswith("#"):
       if line.startswith("#. :src:"):
-        key, extras = line[9:].split('          ')
-        extras = extras.split(',')
-        entries_under_construction.append(TranslationEntry(key, "", "", int(extras[0]), int(extras[1]), int(extras[2]), int(extras[3])))
+        entries_under_construction.append(TranslationEntry(line[9:]))
     elif line.startswith("msgid"):
       current_msgid = line[7:-1].replace('\\"', '"')
       current_mode = MODE_MSGID
@@ -206,7 +204,7 @@ if __name__ == '__main__':
       del master_entries_by_value[(master_entry.value, master_entry.context)]
 
       for e in all_entries:
-        outfile.write("#. :src: %s          %d,%d,%d,%d%s" % (e.key, e.leftquote, e.rightquote, e.leftspaces, e.rightspaces, os.linesep))
+        outfile.write("#. :src: %s" % e.key + os.linesep)
       if len(master_entry.context):
         outfile.write("msgctxt \"%s\"" % master_entry.context.replace('"', '\\"') + os.linesep)
       outfile.write('msgid "%s"' % master_entry.value.replace('"', '\\"') + os.linesep)
@@ -239,5 +237,5 @@ if __name__ == '__main__':
   elif args.mode == 'po2zusi':
     for master_entry in master_file:
       translated_entry = po_file[(master_entry.key, master_entry.context)]
-      outfile.write("%s = %s%s%s%s%s" % (master_entry.key, " " * translated_entry.leftspaces, "'" if translated_entry.leftquote else "",
-          translated_entry.value, "'" if translated_entry.rightquote else "", " " * translated_entry.rightspaces) + os.linesep)
+      outfile.write("%s = %s%s%s%s%s" % (master_entry.key, " " * master_entry.leftspaces, "'" if master_entry.leftquote else "",
+          translated_entry.value, "'" if master_entry.rightquote else "", " " * master_entry.rightspaces) + os.linesep)
