@@ -111,7 +111,7 @@ def write_zusi_file(f, translation_entries):
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Translation helper for Zusi translation files.')
-  parser.add_argument('mode', choices=['zusi2pot', 'zusi2po', 'po2zusi', 'porefresh'])
+  parser.add_argument('mode', choices=['zusi2pot', 'zusi2po', 'po2zusi'])
   parser.add_argument('--master', '-m', type=myargparse.CodecFileType('r', 'ISO-8859-1'),
       help='Zusi master translation file (deutsch.txt). '
       + 'This is the file from which translation keys and their order will be taken.', required=True)
@@ -127,7 +127,7 @@ if __name__ == '__main__':
 
   if args.mode == 'zusi2po' and args.translation is None:
     parser.error('Missing existing translation file (--translation/-t)')
-  if args.mode == 'porefresh' and args.po_file is None:
+  if args.mode == 'po2zusi' and args.po_file is None:
     parser.error('Missing existing translation file (--po-file/-p)')
 
   contexts = {}
@@ -139,8 +139,8 @@ if __name__ == '__main__':
 
   if args.mode == 'zusi2po':
     translation_file = read_zusi_file(args.translation, {})
-  elif args.mode in ['porefresh', 'po2zusi']:
-      po_file = read_po_file(args.po_file)
+  elif args.mode == 'po2zusi':
+    po_file = read_po_file(args.po_file)
 
   outfile = args.out
 
