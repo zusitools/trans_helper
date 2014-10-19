@@ -111,7 +111,7 @@ def write_zusi_file(f, translation_entries):
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Translation helper for Zusi translation files.')
-  parser.add_argument('mode', choices=['zusi2pot', 'zusi2po', 'po2zusi'])
+  parser.add_argument('mode', choices=['zusi2pot', 'zusi2po', 'po2zusi', 'checkzusi'],
       help="Mode to operate in. The following modes are supported: " +
       " ### zusi2pot: Creates a .pot (PO template) file from the file specified by --master."
       " ### zusi2po: Creates a .po file using keys and context information from the file specified by --master " +
@@ -128,7 +128,7 @@ if __name__ == '__main__':
       help='Existing PO translation file of the target language.')
   parser.add_argument('--context', '-c', action='append', nargs='*', type=myargparse.CodecFileType('r'),
       help='List of context entries (disambiguation of identical source texts).')
-  parser.add_argument('--out', '-o', type=myargparse.CodecFileType('w'), help='Output file', required=True)
+  parser.add_argument('--out', '-o', type=myargparse.CodecFileType('w'), help='Output file')
 
   args = parser.parse_args()
 
@@ -136,6 +136,40 @@ if __name__ == '__main__':
     parser.error('Missing existing translation file (--translation/-t)')
   if args.mode == 'po2zusi' and args.po_file is None:
     parser.error('Missing existing translation file (--po-file/-p)')
+  if args.mode != 'checkzusi' and args.out is None:
+    parser.error('Missing output file name (--out/-o)')
+
+  if args.mode == 'checkzusi':
+    master_file = read_zusi_file(args.master, {}, True)
+
+    entries_by_key = {}
+    keys_multiple_sources = []
+    keys_multiple_occurrences = []
+    for entry in master_file:
+      try:
+        entries_by_key[entry.key].append(entry)
+      except KeyError:
+        entries_by_key[entry.key] = [entry]
+
+    for key, entries in entries_by_key.items():
+      if len(entries) > 1:
+        values = set([entry.value for entry in entries])
+        if len(values) == 1:
+          keys_multiple_occurrences.append(key)
+        else:
+          keys_multiple_sources.append(key)
+
+    if len(keys_multiple_sources) == 0 and len(keys_multiple_occurrences) == 0:
+      print("File is OK.")
+    else:
+      print("The following keys occur multiple times in the file, but with the same source text:")
+      for key in keys_multiple_occurrences:
+        print("  " + key + ": '" + entries_by_key[key][0].value + "'")
+      print("The following keys occur multiple times in the file with different source text:")
+      for key in keys_multiple_sources:
+        print("  " + key + ": " + ", ".join(["'" + entry.value + "'" for entry in entries_by_key[key]]))
+
+    sys.exit(0)
 
   contexts = {}
   if args.context is not None:
