@@ -112,6 +112,13 @@ def write_zusi_file(f, translation_entries):
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Translation helper for Zusi translation files.')
   parser.add_argument('mode', choices=['zusi2pot', 'zusi2po', 'po2zusi'])
+      help="Mode to operate in. The following modes are supported: " +
+      " ### zusi2pot: Creates a .pot (PO template) file from the file specified by --master."
+      " ### zusi2po: Creates a .po file using keys and context information from the file specified by --master " +
+        "and translations from the file specified by --translation. This should only be necessary when " +
+        "converting an existing translation project to .po files."
+      " ### po2zusi: Creates a Zusi translation file (.txt) from the PO file specified by --po-file using " +
+        "keys and context information from the file specified by --master")
   parser.add_argument('--master', '-m', type=myargparse.CodecFileType('r', 'ISO-8859-1'),
       help='Zusi master translation file (deutsch.txt). '
       + 'This is the file from which translation keys and their order will be taken.', required=True)
