@@ -14,14 +14,20 @@ class CodecFileType(object):
             the builtin open() function.
     """
 
-    def __init__(self, mode='r', codec='UTF-8'):
+    def __init__(self, mode='r', default_codec='UTF-8'):
         self._mode = mode
-        self._codec = codec
+        self._default_codec = default_codec
 
     def __call__(self, string):
-        return codecs.open(string, self._mode, self._codec)
+        filename = string
+        codec = self._default_codec
+        try:
+            (filename, codec) = string.split('@', 1)
+        except ValueError:
+            pass
+        return codecs.open(filename, self._mode, codec)
 
     def __repr__(self):
-        args = [self._mode, self._codec]
+        args = [self._mode, self._default_codec]
         args_str = ', '.join([repr(arg) for arg in args if arg is not None])
         return '%s(%s)' % (type(self).__name__, args_str)

@@ -108,7 +108,9 @@ def write_zusi_file(f, translation_entries):
   f.close()
 
 if __name__ == '__main__':
-  parser = argparse.ArgumentParser(description='Translation helper for Zusi translation files.')
+  parser = argparse.ArgumentParser(description='Translation helper for Zusi translation files.',
+      epilog='You can optionally specify an encoding argument after a file name, e.g. deutsch.txt@ISO-8859-1. ' +
+          'The encoding defaults to UTF-8.')
   parser.add_argument('mode', choices=['zusi2pot', 'zusi2po', 'po2zusi', 'checkzusi'],
       help="Mode to operate in. The following modes are supported: " +
       " ### zusi2pot: Creates a .pot (PO template) file from the file specified by --master."
@@ -117,9 +119,10 @@ if __name__ == '__main__':
         "converting an existing translation project to .po files."
       " ### po2zusi: Creates a Zusi translation file (.txt) from the PO file specified by --po-file using " +
         "keys and context information from the file specified by --master")
-  parser.add_argument('--master', '-m', type=myargparse.CodecFileType('r', 'ISO-8859-1'),
-      help='Zusi master translation file (deutsch.txt). '
-      + 'This is the file from which translation keys and their order will be taken.', required=True)
+  parser.add_argument('--master', '-m', action='append', nargs='+', type=myargparse.CodecFileType('r'),
+      help='Zusi master translation files (deutsch.txt, GleisplanEditor.txt, ...). '
+      + 'These are the files from which translation keys and their order will be taken.'
+      + 'For po2zusi, only one file may be specified.', required=True)
   parser.add_argument('--translation', '-t', type=myargparse.CodecFileType('r'),
       help='Existing Zusi translation file of the target language.')
   parser.add_argument('--po-file', '-p', type=myargparse.CodecFileType('r'),
@@ -134,11 +137,15 @@ if __name__ == '__main__':
     parser.error('Missing existing translation file (--translation/-t)')
   if args.mode == 'po2zusi' and args.po_file is None:
     parser.error('Missing existing translation file (--po-file/-p)')
+  if args.mode == 'po2zusi' and len(args.master) != 1:
+    parser.error('Need exactly one master file for po2zusi mode')
   if args.mode != 'checkzusi' and args.out is None:
     parser.error('Missing output file name (--out/-o)')
 
   if args.mode == 'checkzusi':
-    master_file = read_zusi_file(args.master, {}, True)
+    master_file = []
+    for m in args.master:
+      master_file += read_zusi_file(m[0], {}, keep_order = True)
 
     entries_by_key = {}
     keys_multiple_sources = []
@@ -174,7 +181,9 @@ if __name__ == '__main__':
     for context_file in args.context:
       read_context_file(context_file[0], contexts)
 
-  master_file = read_zusi_file(args.master, contexts, True)
+  master_file = []
+  for m in args.master:
+    master_file += read_zusi_file(m[0], contexts, keep_order = True)
 
   if args.mode == 'zusi2po':
     translation_file = read_zusi_file(args.translation, {})
