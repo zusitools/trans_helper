@@ -148,15 +148,16 @@ def get_shortcut_weight(string, pos, existing_shortcut = ''):
   # Favor start of a word and uppercase letters
   result = 0
   if pos == 0 or string[pos-1] in " -_+":
-    result = 5 if string[pos].upper() == string[pos] else 6
+    result = 500 if string[pos].upper() == string[pos] else 600
   else:
-    result = 7 if string[pos].upper() == string[pos] else 8
+    result = 700 if string[pos].upper() == string[pos] else 800
   if existing_shortcut not in "abcdefghijklmnopqrstuvwxyz" and string[pos].lower() == existing_shortcut:
-    result -= 5
-  if string[pos] not in "abcdefghijklmnopqrstuvwxyz" + existing_shortcut:
+    result -= 500
+  if string[pos].lower() not in "abcdefghijklmnopqrstuvwxyz" + existing_shortcut:
     # Do not select special characters like '(', ',', ')' if not necessary
-    result += 5
-  return result
+    result += 500
+  # Favor positions at the start of the string
+  return result + pos // 10
 
 def get_min_shortcut_weight(string, char, existing_shortcut):
   occurrences = []
@@ -176,7 +177,7 @@ def add_shortcut(string, shortcut):
   position = -1
   while start != -1:
     weight = get_shortcut_weight(string, start)
-    # Favor earlier positions
+    # When weights are equal, take the earlier position
     if weight < min_weight:
       position = start
       min_weight = weight
