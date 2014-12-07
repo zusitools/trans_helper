@@ -191,7 +191,7 @@ if __name__ == '__main__':
     po_file = read_po_file(args.po_file)
 
   outfile = args.out
-
+  empty_string_entry = TranslationEntry("", "", "", False, False, 0, 0)
   master_entries_by_value = {}
   for entry in master_file:
     try:
@@ -201,7 +201,7 @@ if __name__ == '__main__':
 
   if args.mode in ['zusi2pot', 'zusi2po']:
     # Print the entry for the empty string first
-    master_file.insert(0, TranslationEntry("", "", "", False, False, 0, 0))
+    master_file.insert(0, empty_string_entry)
 
     # Keep the ordering of the master file.
     for master_entry in master_file:
@@ -245,6 +245,12 @@ if __name__ == '__main__':
 
   elif args.mode == 'po2zusi':
     for master_entry in master_file:
-      translated_entry = po_file[(master_entry.key, master_entry.context)]
+      if len(master_entry.value):
+          try:
+              translated_entry = po_file[(master_entry.key.strip(), master_entry.context)]
+          except KeyError:
+              raise Exception("Key '%s', context '%s' not found in PO file (original text: '%s')" % (master_entry.key.strip(), master_entry.context, master_entry.value))
+      else:
+          translated_entry = empty_string_entry
       outfile.write("%s = %s%s%s%s%s" % (master_entry.key, " " * master_entry.leftspaces, "'" if master_entry.leftquote else "",
           translated_entry.value, "'" if master_entry.rightquote else "", " " * master_entry.rightspaces) + os.linesep)
