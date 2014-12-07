@@ -3,6 +3,7 @@ import myargparse
 import os
 import sys
 import re
+from collections import defaultdict
 
 class TranslationEntry:
   def __init__(self, key, value='', context='', leftquote='', rightquote='', leftspaces=0, rightspaces=0):
@@ -110,6 +111,145 @@ def write_zusi_file(f, translation_entries):
     f.write('%s = %d%s%s%d%s\n' % (entry.key, " " * entry.leftspaces, "'" if entry.leftquote else '', entry.value, "'" if entry.rightquote else '', " " * entry.rightspaces))
   f.close()
 
+def read_shortcut_group_file(f):
+  cur_set = set()
+  groups = []
+  key_to_group = {}
+  for line in f:
+    line = line.strip(" \r\n")
+    if len(line):
+      cur_set.add(line)
+      key_to_group[line] = cur_set
+    elif len(cur_set):
+      groups.append(cur_set)
+      cur_set = set()
+  return (groups, key_to_group)
+
+def get_translated_entry(master_entry, po_file):
+  if len(master_entry.value):
+    try:
+      return po_file[(master_entry.key.strip(), master_entry.context)]
+    except KeyError:
+      raise Exception("Key '%s', context '%s' not found in PO file (original text: '%s')" %
+          (master_entry.key.strip(), master_entry.context, master_entry.value))
+  else:
+    return empty_string_entry
+
+def get_shortcut(string):
+  """Returns the (lowercased) letter after the first occurrence of '&' that is not followed by a '&'"""
+  start = string.find('&')
+  while start != -1:
+    if start < len(string) - 1 and string[start+1] != '&':
+      return string[start+1].lower()
+    start = string.find('&', start+1)
+  return None
+
+def get_shortcut_weight(string, pos, existing_shortcut = ''):
+  # Favor start of a word and uppercase letters
+  result = 0
+  if pos == 0 or string[pos-1] in " -_+":
+    result = 5 if string[pos].upper() == string[pos] else 6
+  else:
+    result = 7 if string[pos].upper() == string[pos] else 8
+  if existing_shortcut not in "abcdefghijklmnopqrstuvwxyz" and string[pos].lower() == existing_shortcut:
+    result -= 5
+  if string[pos] not in "abcdefghijklmnopqrstuvwxyz" + existing_shortcut:
+    # Do not select special characters like '(', ',', ')' if not necessary
+    result += 5
+  return result
+
+def get_min_shortcut_weight(string, char, existing_shortcut):
+  occurrences = []
+  start = string.find(char)
+  while start != -1:
+    occurrences.append(start)
+    start = string.find(char, start+1)
+  return 9999 if not len(occurrences) else min(get_shortcut_weight(string, pos, existing_shortcut) for pos in occurrences)
+
+def add_shortcut(string, shortcut):
+  """Inserts an '&' before an occurrence of 'shortcut' in the specified string and returns the result.
+  shortcut must be a lower-case letter that occurs in the (lowercased) string"""
+
+  # List of tuples (position, value) where a lower value means a more favorable position
+  start = string.lower().find(shortcut)
+  min_weight = 9999
+  position = -1
+  while start != -1:
+    weight = get_shortcut_weight(string, start)
+    # Favor earlier positions
+    if weight < min_weight:
+      position = start
+      min_weight = weight
+    start = string.lower().find(shortcut, start+1)
+
+  if position == -1:
+    raise Exception('Shortcut %s not found in string %s' % (shortcut, string))
+  return string[:position] + '&' + string[position:]
+
+def generate_shortcuts(master_file, translation_file, shortcut_groups):
+  (groups, key_to_group) = read_shortcut_group_file(shortcut_groups)
+  result = {}
+
+  master_entries_by_key = {}
+  for entry in master_file:
+    master_entries_by_key[entry.key] = entry
+
+  # The shortcut generation problem is an instance of the Assignment Problem:
+  # Assign n workers (translated texts) to m jobs (letters) so that the total cost
+  # is minimized. The cost is 9999 when the letter does not occur in the text, else
+  # it is an indicator of how favorable that letter is for the text (e.g. it occurs
+  # at the start of a word, is an upper-case letter or is a special character
+  # like a number that is also a shortcut in the original text).
+
+  for group in groups:
+    # Find out which entries of the master file have shortcuts at all
+    entries_with_shortcuts = []
+    matrix = []
+    letterset = set()
+    for key in group:
+      if 'Caption' not in key and 'Text' not in key or key not in master_entries_by_key:
+        continue
+      master_entry = master_entries_by_key[key]
+      shortcut = get_shortcut(master_entry.value)
+      if shortcut is None:
+        continue
+      entries_with_shortcuts.append((key, shortcut))
+      translated_entry = get_translated_entry(master_entry, translation_file)
+      for char in translated_entry.value.lower():
+        if char != ' ':
+          letterset.add(char)
+
+    if not len(entries_with_shortcuts):
+      continue
+
+    letterset = sorted(letterset)
+
+    for entry in entries_with_shortcuts:
+      master_entry = master_entries_by_key[entry[0]]
+      existing_shortcut = get_shortcut(master_entry.value)
+      translated_entry = get_translated_entry(master_entry, translation_file)
+      value = translated_entry.value.lower()
+
+      matrix.append([get_min_shortcut_weight(value, c, existing_shortcut) for c in letterset])
+
+    from . import munkres
+    m = munkres.Munkres()
+    indexes = m.compute(matrix)
+
+    for (entry_idx, letter_idx) in indexes:
+      entry = entries_with_shortcuts[entry_idx]
+      master_entry = master_entries_by_key[entry[0]]
+      translated_entry = get_translated_entry(master_entry, translation_file)
+
+      if matrix[entry_idx][letter_idx] == 9999:
+        raise Exception("No conflict-free shortcut could be found for %s (translation of key %s)" % (translated_entry.value, translated_entry.key))
+
+      result[entry[0]] = letterset[letter_idx]
+
+  return result
+
+empty_string_entry = TranslationEntry("", "", "", False, False, 0, 0)
+
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Translation helper for Zusi translation files.',
       epilog='You can optionally specify an encoding argument after a file name, e.g. deutsch.txt@ISO-8859-1. ' +
@@ -132,8 +272,14 @@ if __name__ == '__main__':
       help='Existing PO translation file of the target language.')
   parser.add_argument('--context', '-c', action='append', nargs='*', type=myargparse.CodecFileType('r'),
       help='List of context entries (disambiguation of identical source texts).')
+  parser.add_argument('--shortcut-groups', '-s', type=myargparse.CodecFileType('r'),
+      help='List of shortcut groups (translation keys that should not get the same keyboard shortcut). '
+      + 'Each key should be on its own line, and the groups should be separated by an empty line. '
+      + 'The file must also end with an empty line. '
+      + 'If this option is supplied, shortcuts are generated for translations whose source strings '
+      + 'contain a keyboard shortcut')
   parser.add_argument('--out', '-o', type=myargparse.CodecFileType('w'), help='Output file')
-  parser.add_argument('--strip-shortcuts', '-s', action='store_const', const=True,
+  parser.add_argument('--strip-shortcuts', '-ss', action='store_const', const=True,
       help='zusi2pot/zusi2po: Strip keyboard shortcuts from the Zusi file. Only affects source texts whose key contains "Caption" or "Text"')
 
   args = parser.parse_args()
@@ -198,13 +344,9 @@ if __name__ == '__main__':
     po_file = read_po_file(args.po_file)
 
   outfile = args.out
-  empty_string_entry = TranslationEntry("", "", "", False, False, 0, 0)
-  master_entries_by_value = {}
+  master_entries_by_value = defaultdict(list)
   for entry in master_file:
-    try:
-      master_entries_by_value[(entry.value, entry.context)].append(entry)
-    except:
-      master_entries_by_value[(entry.value, entry.context)] = [entry]
+    master_entries_by_value[(entry.value, entry.context)].append(entry)
 
   if args.mode in ['zusi2pot', 'zusi2po']:
     # Print the entry for the empty string first
@@ -251,13 +393,13 @@ if __name__ == '__main__':
       outfile.write(os.linesep)
 
   elif args.mode == 'po2zusi':
+    if args.shortcut_groups:
+      shortcuts = generate_shortcuts(master_file, po_file, args.shortcut_groups)
+
     for master_entry in master_file:
-      if len(master_entry.value):
-          try:
-              translated_entry = po_file[(master_entry.key.strip(), master_entry.context)]
-          except KeyError:
-              raise Exception("Key '%s', context '%s' not found in PO file (original text: '%s')" % (master_entry.key.strip(), master_entry.context, master_entry.value))
-      else:
-          translated_entry = empty_string_entry
+      translated_entry = get_translated_entry(master_entry, po_file)
+      value = translated_entry.value
+      if args.shortcut_groups and (master_entry.key in shortcuts):
+        value = add_shortcut(value, shortcuts[master_entry.key])
       outfile.write("%s = %s%s%s%s%s" % (master_entry.key, " " * master_entry.leftspaces, "'" if master_entry.leftquote else "",
-          translated_entry.value, "'" if master_entry.rightquote else "", " " * master_entry.rightspaces) + os.linesep)
+          value, "'" if master_entry.rightquote else "", " " * master_entry.rightspaces) + os.linesep)
