@@ -2,6 +2,7 @@ import argparse
 import myargparse
 import os
 import sys
+import re
 
 class TranslationEntry:
   def __init__(self, key, value='', context='', leftquote='', rightquote='', leftspaces=0, rightspaces=0):
@@ -13,7 +14,7 @@ class TranslationEntry:
     self.leftspaces = leftspaces
     self.rightspaces = rightspaces
 
-def read_zusi_file(f, contexts, keep_order = False):
+def read_zusi_file(f, contexts, keep_order = False, strip_shortcuts = False):
   """Returns either a dict indexed by key (if keep_order == False) or a list of translation entries in the specified file."""
   result = []
   for line in f:
@@ -27,6 +28,8 @@ def read_zusi_file(f, contexts, keep_order = False):
     leftquote = len(value) > 0 and value[0] == "'"
     rightquote = len(value) > 1 and value[len(value) - 1] == "'"
     value = value.strip("'")
+    if strip_shortcuts and ('Caption' in key or 'Text' in key):
+      value = re.sub(r'&([^&])', r'\1', value)
     try:
       context = contexts[key]
     except KeyError:
@@ -130,6 +133,8 @@ if __name__ == '__main__':
   parser.add_argument('--context', '-c', action='append', nargs='*', type=myargparse.CodecFileType('r'),
       help='List of context entries (disambiguation of identical source texts).')
   parser.add_argument('--out', '-o', type=myargparse.CodecFileType('w'), help='Output file')
+  parser.add_argument('--strip-shortcuts', '-s', action='store_const', const=True,
+      help='zusi2pot/zusi2po: Strip keyboard shortcuts from the Zusi file. Only affects source texts whose key contains "Caption" or "Text"')
 
   args = parser.parse_args()
 
@@ -141,6 +146,8 @@ if __name__ == '__main__':
     parser.error('Need exactly one master file for po2zusi mode')
   if args.mode != 'checkzusi' and args.out is None:
     parser.error('Missing output file name (--out/-o)')
+  if args.strip_shortcuts and args.mode not in ['zusi2pot', 'zusi2po']:
+    parser.error('--strip-shortcuts can only be used with zusi2pot/zusi2po mode')
 
   if args.mode == 'checkzusi':
     master_file = []
@@ -183,7 +190,7 @@ if __name__ == '__main__':
 
   master_file = []
   for m in args.master:
-    master_file += read_zusi_file(m[0], contexts, keep_order = True)
+    master_file += read_zusi_file(m[0], contexts, keep_order = True, strip_shortcuts = args.strip_shortcuts)
 
   if args.mode == 'zusi2po':
     translation_file = read_zusi_file(args.translation, {})
