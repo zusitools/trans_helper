@@ -15,6 +15,12 @@ class TranslationEntry:
     self.leftspaces = leftspaces
     self.rightspaces = rightspaces
 
+  def __str__(self):
+    return "'%s' [%s] = '%s'" % (self.key, self.context, self.value)
+
+  def __repr__(self):
+    return self.__str__()
+
 def read_zusi_file(f, contexts, keep_order = False, strip_shortcuts = False):
   """Returns either a dict indexed by key (if keep_order == False) or a list of translation entries in the specified file."""
   result = []
@@ -30,7 +36,7 @@ def read_zusi_file(f, contexts, keep_order = False, strip_shortcuts = False):
     rightquote = len(value) > 1 and value[len(value) - 1] == "'"
     value = value.strip("'")
     if strip_shortcuts and ('Caption' in key or 'Text' in key):
-      value = re.sub(r'&([^&])', r'\1', value)
+      value = re.sub(r'(?<!&)&(?!&)', '', value) # negative lookbehind and lookahead
     try:
       context = contexts[key]
     except KeyError:
@@ -133,7 +139,7 @@ def get_translated_entry(master_entry, po_file):
       raise Exception("Key '%s', context '%s' not found in PO file (original text: '%s')" %
           (master_entry.key.strip(), master_entry.context, master_entry.value))
   else:
-    return empty_string_entry
+    return get_empty_string_entry()
 
 def get_shortcut(string):
   """Returns the (lowercased) letter after the first occurrence of '&' that is not followed by a '&'"""
@@ -249,7 +255,8 @@ def generate_shortcuts(master_file, translation_file, shortcut_groups):
 
   return result
 
-empty_string_entry = TranslationEntry("", "", "", False, False, 0, 0)
+def get_empty_string_entry():
+  return TranslationEntry("", "", "", False, False, 0, 0)
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Translation helper for Zusi translation files.',
@@ -351,16 +358,22 @@ if __name__ == '__main__':
 
   if args.mode in ['zusi2pot', 'zusi2po']:
     # Print the entry for the empty string first
-    master_file.insert(0, empty_string_entry)
+    master_file.insert(0, get_empty_string_entry())
 
     # Keep the ordering of the master file.
     for master_entry in master_file:
-      try:
-        all_entries = master_entries_by_value[(master_entry.value, master_entry.context)]
-      except KeyError:
+      key = (master_entry.value, master_entry.context)
+      if key not in master_entries_by_value:
+        # no try + except KeyError here, this is a defaultdict
         continue
 
-      del master_entries_by_value[(master_entry.value, master_entry.context)]
+      # Get all entries with the same key and context
+      all_entries = master_entries_by_value[key]
+
+      if not len(all_entries):
+        raise Exception("len(all_entries) == 0: %s" % master_entry)
+
+      del master_entries_by_value[key]
 
       for e in all_entries:
         outfile.write("#. :src: %s" % e.key + os.linesep)
