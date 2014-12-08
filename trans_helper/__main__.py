@@ -5,6 +5,10 @@ import sys
 import re
 from collections import defaultdict
 
+class TranslationException(Exception):
+  def __str__(self):
+    return repr(self.args[0])
+
 class TranslationEntry:
   def __init__(self, key, value='', context='', leftquote='', rightquote='', leftspaces=0, rightspaces=0):
     self.key = key
@@ -404,5 +408,8 @@ if __name__ == '__main__':
       value = translated_entry.value
       if args.shortcut_groups and (master_entry.key in shortcuts):
         value = add_shortcut(value, shortcuts[master_entry.key])
-      outfile.write("%s = %s%s%s%s%s" % (master_entry.key, " " * master_entry.leftspaces, "'" if master_entry.leftquote else "",
+      try:
+        outfile.write("%s = %s%s%s%s%s" % (master_entry.key, " " * master_entry.leftspaces, "'" if master_entry.leftquote else "",
           value, "'" if master_entry.rightquote else "", " " * master_entry.rightspaces) + os.linesep)
+      except UnicodeEncodeError as e:
+        raise TranslationException("%s = '%s' cannot be written in the specified output encoding. Error message: %s" % (master_entry.key, value, os.linesep + e.message))
