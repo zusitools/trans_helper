@@ -21,89 +21,100 @@ class TranslationEntry:
   def __repr__(self):
     return self.__str__()
 
-def read_zusi_file(f, contexts, keep_order = False, strip_shortcuts = False):
-  """Returns either a dict indexed by key (if keep_order == False) or a list of translation entries in the specified file."""
-  result = []
-  for line in f:
-    try:
-      (key, value) = line.strip("\r\n").split(" = ", 1)
-    except ValueError:
-      continue
-    leftspaces = len(value) - len(value.lstrip(" "))
-    rightspaces = len(value) - len(value.rstrip(" "))
-    value = value.strip(" ")
-    leftquote = len(value) > 0 and value[0] == "'"
-    rightquote = len(value) > 1 and value[len(value) - 1] == "'"
-    value = value.strip("'")
-    if strip_shortcuts and ('Caption' in key or 'Text' in key):
-      value = re.sub(r'(?<!&)&(?!&)', '', value) # negative lookbehind and lookahead
-    try:
-      context = contexts[key]
-    except KeyError:
-      context = ''
-    result.append(TranslationEntry(key, value, context, leftquote, rightquote, leftspaces, rightspaces))
-  f.close()
-  if keep_order:
-    return result
-  else:
-    return dict((item.key, item) for item in result)
+class TranslationFile:
+  def __init__(self):
+    self.entries = {} # by key
+    self.entries_in_order = []
 
-def read_po_file(f):
-  result = []
+  def __iter__(self):
+    return iter(self.entries_in_order)
 
-  MODE_MSGID = 1
-  MODE_MSGSTR = 2
-  MODE_MSGCTXT = 3
+  def append(self, entry):
+    self.entries[entry.key] = entry
+    self.entries_in_order.append(entry)
 
-  current_mode = 0
-  current_msgid = ''
-  current_context = ''
-  current_value = ''
-  entries_under_construction = []
+  def read_from_zusi(self, f, contexts, strip_shortcuts = False):
+    for line in f:
+      try:
+        (key, value) = line.strip("\r\n").split(" = ", 1)
+      except ValueError:
+        continue
+      leftspaces = len(value) - len(value.lstrip(" "))
+      rightspaces = len(value) - len(value.rstrip(" "))
+      value = value.strip(" ")
+      leftquote = len(value) > 0 and value[0] == "'"
+      rightquote = len(value) > 1 and value[len(value) - 1] == "'"
+      value = value.strip("'")
+      if strip_shortcuts and ('Caption' in key or 'Text' in key):
+        value = re.sub(r'(?<!&)&(?!&)', '', value) # negative lookbehind and lookahead
+      try:
+        context = contexts[key]
+      except KeyError:
+        context = ''
+      self.append(TranslationEntry(key, value, context, leftquote, rightquote, leftspaces, rightspaces))
 
-  for line in f:
-    line = line.strip("\r\n")
-    if line.startswith("#"):
-      if line.startswith("#. :src:"):
-        entries_under_construction.append(TranslationEntry(line[9:]))
-    elif line.startswith("msgid"):
-      current_msgid = line[7:-1].replace('\\"', '"')
-      current_mode = MODE_MSGID
-    elif line.startswith("msgctxt"):
-      current_context = line[9:-1].replace('\\"', '"')
-      current_mode = MODE_MSGCTXT
-    elif line.startswith("msgstr"):
-      current_value = line[8:-1].replace('\\"', '"')
-      current_mode = MODE_MSGSTR
-    elif line.startswith('"'):
-      string = line[1:-1].replace('\\"', '"')
-      if current_mode == MODE_MSGID:
-        current_msgid += string
-      elif current_mode == MODE_MSGCTXT:
-        current_context += string
-      elif current_mode == MODE_MSGSTR:
-        current_value += string
-    elif line == '':
-      # Do not write the special translation (charset etc.) for msgid ""
-      if current_msgid != '':
-        for entry in entries_under_construction:
-          entry.context = current_context
-          entry.value = current_value
-      result.extend(entries_under_construction)
-      entries_under_construction = []
-      current_mode = 0
-      current_msgid = ''
-      current_context = ''
-      current_value = ''
+    return self
 
-  # Write last entry even if the file does not end with a blank line.
-  if current_msgid != '':
-    for entry in entries_under_construction:
-      entry.context = current_context
-      entry.value = current_value
-  result.extend(entries_under_construction)
+  def read_from_po(self, f):
+    MODE_MSGID = 1
+    MODE_MSGSTR = 2
+    MODE_MSGCTXT = 3
 
-  return dict(((item.key, item.context), item) for item in result)
+    current_mode = 0
+    current_msgid = ''
+    current_context = ''
+    current_value = ''
+    entries_under_construction = set()
+
+    for line in f:
+      line = line.strip("\r\n")
+      if line.startswith("#"):
+        if line.startswith("#. :src:"):
+          entry = TranslationEntry(line[9:])
+          self.append(entry)
+          entries_under_construction.add(entry)
+      elif line.startswith("msgid"):
+        current_msgid = unescape_po(line[7:-1])
+        current_mode = MODE_MSGID
+      elif line.startswith("msgctxt"):
+        current_context = unescape_po(line[9:-1])
+        current_mode = MODE_MSGCTXT
+      elif line.startswith("msgstr"):
+        current_value = unescape_po(line[8:-1])
+        current_mode = MODE_MSGSTR
+      elif line.startswith('"'):
+        string = unescape_po(line[1:-1])
+        if current_mode == MODE_MSGID:
+          current_msgid += string
+        elif current_mode == MODE_MSGCTXT:
+          current_context += string
+        elif current_mode == MODE_MSGSTR:
+          current_value += string
+      elif line == '':
+        # Do not write the special translation (charset etc.) for msgid ""
+        if current_msgid != '':
+          for entry in entries_under_construction:
+            entry.context = current_context
+            entry.value = current_value
+        entries_under_construction = set()
+        current_mode = 0
+        current_msgid = ''
+        current_context = ''
+        current_value = ''
+
+    # Write last entry even if the file does not end with a blank line.
+    if current_msgid != '':
+      for entry in entries_under_construction:
+        entry.context = current_context
+        entry.value = current_value
+
+    return self
+
+def escape_po(string):
+  return string.replace('"', r'\"')
+
+def unescape_po(string):
+  return string.replace(r'\"', '"')
 
 def read_context_file(f, contexts):
   for line in f:
@@ -111,11 +122,6 @@ def read_context_file(f, contexts):
       continue
     key, context = line.strip("\r\n").split(" ", 1)
     contexts[key] = context
-
-def write_zusi_file(f, translation_entries):
-  for entry in translation_entries:
-    f.write('%s = %d%s%s%d%s\n' % (entry.key, " " * entry.leftspaces, "'" if entry.leftquote else '', entry.value, "'" if entry.rightquote else '', " " * entry.rightspaces))
-  f.close()
 
 def read_shortcut_group_file(f):
   cur_set = set()
@@ -134,10 +140,10 @@ def read_shortcut_group_file(f):
 def get_translated_entry(master_entry, po_file):
   if len(master_entry.value):
     try:
-      return po_file[(master_entry.key.strip(), master_entry.context)]
+      return po_file.entries[master_entry.key.strip()]
     except KeyError:
-      raise Exception("Key '%s', context '%s' not found in PO file (original text: '%s')" %
-          (master_entry.key.strip(), master_entry.context, master_entry.value))
+      raise Exception("Key '%s' not found in PO file (original text: '%s')" %
+          (master_entry.key.strip(), master_entry.value))
   else:
     return get_empty_string_entry()
 
@@ -197,10 +203,6 @@ def generate_shortcuts(master_file, translation_file, shortcut_groups):
   (groups, key_to_group) = read_shortcut_group_file(shortcut_groups)
   result = {}
 
-  master_entries_by_key = {}
-  for entry in master_file:
-    master_entries_by_key[entry.key] = entry
-
   # The shortcut generation problem is an instance of the Assignment Problem:
   # Assign n workers (translated texts) to m jobs (letters) so that the total cost
   # is minimized. The cost is 9999 when the letter does not occur in the text, else
@@ -210,18 +212,18 @@ def generate_shortcuts(master_file, translation_file, shortcut_groups):
 
   for group in groups:
     # Find out which entries of the master file have shortcuts at all
-    entries_with_shortcuts = []
+    entries_with_shortcuts = [] # tuple (translated entry, existing shortcut)
     matrix = []
     letterset = set()
     for key in group:
-      if 'Caption' not in key and 'Text' not in key or key not in master_entries_by_key:
+      if ('Caption' not in key and 'Text' not in key) or key not in master_file.entries:
         continue
-      master_entry = master_entries_by_key[key]
+      master_entry = master_file.entries[key]
       shortcut = get_shortcut(master_entry.value)
       if shortcut is None:
         continue
-      entries_with_shortcuts.append((key, shortcut))
       translated_entry = get_translated_entry(master_entry, translation_file)
+      entries_with_shortcuts.append((translated_entry, shortcut))
       for char in translated_entry.value.lower():
         if char != ' ':
           letterset.add(char)
@@ -231,12 +233,8 @@ def generate_shortcuts(master_file, translation_file, shortcut_groups):
 
     letterset = sorted(letterset)
 
-    for entry in entries_with_shortcuts:
-      master_entry = master_entries_by_key[entry[0]]
-      existing_shortcut = get_shortcut(master_entry.value)
-      translated_entry = get_translated_entry(master_entry, translation_file)
-      value = translated_entry.value.lower()
-
+    for (entry, existing_shortcut) in entries_with_shortcuts:
+      value = entry.value.lower()
       matrix.append([get_min_shortcut_weight(value, c, existing_shortcut) for c in letterset])
 
     from . import munkres
@@ -244,14 +242,12 @@ def generate_shortcuts(master_file, translation_file, shortcut_groups):
     indexes = m.compute(matrix)
 
     for (entry_idx, letter_idx) in indexes:
-      entry = entries_with_shortcuts[entry_idx]
-      master_entry = master_entries_by_key[entry[0]]
-      translated_entry = get_translated_entry(master_entry, translation_file)
+      (entry, existing_shortcut) = entries_with_shortcuts[entry_idx]
 
       if matrix[entry_idx][letter_idx] == 9999:
-        raise Exception("No conflict-free shortcut could be found for %s (translation of key %s)" % (translated_entry.value, translated_entry.key))
+        raise Exception("No conflict-free shortcut could be found for %s (translation of key %s)" % (entry.value, entry.key))
 
-      result[entry[0]] = letterset[letter_idx]
+      result[entry.key] = letterset[letter_idx]
 
   return result
 
@@ -303,53 +299,46 @@ if __name__ == '__main__':
   if args.strip_shortcuts and args.mode not in ['zusi2pot', 'zusi2po']:
     parser.error('--strip-shortcuts can only be used with zusi2pot/zusi2po mode')
 
-  if args.mode == 'checkzusi':
-    master_file = []
-    for m in args.master:
-      master_file += read_zusi_file(m[0], {}, keep_order = True)
-
-    entries_by_key = {}
-    keys_multiple_sources = []
-    keys_multiple_occurrences = []
-    for entry in master_file:
-      try:
-        entries_by_key[entry.key].append(entry)
-      except KeyError:
-        entries_by_key[entry.key] = [entry]
-
-    for key, entries in entries_by_key.items():
-      if len(entries) > 1:
-        values = set([entry.value for entry in entries])
-        if len(values) == 1:
-          keys_multiple_occurrences.append(key)
-        else:
-          keys_multiple_sources.append(key)
-
-    if len(keys_multiple_sources) == 0 and len(keys_multiple_occurrences) == 0:
-      print("File is OK.")
-    else:
-      print("The following keys occur multiple times in the file, but with the same source text:")
-      for key in keys_multiple_occurrences:
-        print("  " + key + ": '" + entries_by_key[key][0].value + "'")
-      print("The following keys occur multiple times in the file with different source text:")
-      for key in keys_multiple_sources:
-        print("  " + key + ": " + ", ".join(["'" + entry.value + "'" for entry in entries_by_key[key]]))
-
-    sys.exit(0)
-
   contexts = {}
   if args.context is not None:
     for context_file in args.context:
       read_context_file(context_file[0], contexts)
 
-  master_file = []
+  master_file = TranslationFile()
   for m in args.master:
-    master_file += read_zusi_file(m[0], contexts, keep_order = True, strip_shortcuts = args.strip_shortcuts)
+    master_file.read_from_zusi(m[0], contexts, strip_shortcuts = args.strip_shortcuts)
+
+  if args.mode == 'checkzusi':
+    duplicate_key_entries = defaultdict(list)
+
+    for entry in master_file.entries_in_order:
+      if master_file.entries[entry.key] != entry:
+        if entry.key not in duplicate_key_entries:
+          duplicate_key_entries[entry.key].append(master_file.entries[entry.key])
+        duplicate_key_entries[entry.key].append(entry)
+
+    if len(duplicate_key_entries) == 0:
+      print("File is OK.")
+    else:
+      single_source = []
+      multiple_sources = []
+      for key, entries in duplicate_key_entries.items():
+        values = set([entry.value for entry in entries])
+        (single_source if len(values) == 1 else multiple_sources).append(entries)
+
+      print("The following keys occur multiple times in the file, but with the same source text:")
+      for group in single_source:
+        print("  " + group[0].key + ": '" + group[0].value + "'")
+      print("The following keys occur multiple times in the file with different source text:")
+      for group in multiple_sources:
+        print("  " + group[0].key + ": " + ", ".join(["'" + entry.value + "'" for entry in group]))
+
+    sys.exit(0)
 
   if args.mode == 'zusi2po':
-    translation_file = read_zusi_file(args.translation, {})
+    translation_file = TranslationFile().read_from_zusi(args.translation, {})
   elif args.mode == 'po2zusi':
-    po_file = read_po_file(args.po_file)
+    po_file = TranslationFile().read_from_po(args.po_file)
 
   outfile = args.out
   master_entries_by_value = defaultdict(list)
@@ -358,7 +347,7 @@ if __name__ == '__main__':
 
   if args.mode in ['zusi2pot', 'zusi2po']:
     # Print the entry for the empty string first
-    master_file.insert(0, get_empty_string_entry())
+    master_file.entries_in_order.insert(0, get_empty_string_entry())
 
     # Keep the ordering of the master file.
     for master_entry in master_file:
@@ -378,15 +367,15 @@ if __name__ == '__main__':
       for e in all_entries:
         outfile.write("#. :src: %s" % e.key + os.linesep)
       if len(master_entry.context):
-        outfile.write("msgctxt \"%s\"" % master_entry.context.replace('"', '\\"') + os.linesep)
-      outfile.write('msgid "%s"' % master_entry.value.replace('"', '\\"') + os.linesep)
+        outfile.write("msgctxt \"%s\"" % escape_po(master_entry.context) + os.linesep)
+      outfile.write('msgid "%s"' % escape_po(master_entry.value) + os.linesep)
       if args.mode == 'zusi2pot':
         outfile.write('msgstr ""' + os.linesep)
       else:
         possible_translation_entries = [translation_file[entry.key] for entry in all_entries if entry.key in translation_file]
         possible_translations = set([entry.value for entry in possible_translation_entries])
         if len(possible_translations) == 1:
-          outfile.write('msgstr "%s"' % next(iter(possible_translations)).replace('"', '\\"') + os.linesep)
+          outfile.write('msgstr "%s"' % escape_po(next(iter(possible_translations))) + os.linesep)
         else:
           print("Error: %d translations found for text '%s', context '%s', with the following set of keys:"
               % (len(possible_translations), master_entry.value, master_entry.context))
