@@ -10,9 +10,11 @@ class TranslationException(Exception):
     return repr(self.args[0])
 
 class TranslationEntry:
-  def __init__(self, key, value='', context='', leftquote='', rightquote='', leftspaces=0, rightspaces=0):
+  def __init__(self, key, value='', source_value='', context='',
+      leftquote='', rightquote='', leftspaces=0, rightspaces=0):
     self.key = key
     self.value = value
+    self.source_value = source_value
     self.context = context
     self.leftquote = leftquote
     self.rightquote = rightquote
@@ -27,14 +29,17 @@ class TranslationEntry:
 
 class TranslationFile:
   def __init__(self):
-    self.entries = {} # by key
+    # Entries by key. Multiple entries may have the same key
+    # (because of errors in the translation file or because of
+    # multiple translation files in one po file).
+    self.entries = defaultdict(set)
     self.entries_in_order = []
 
   def __iter__(self):
     return iter(self.entries_in_order)
 
   def append(self, entry):
-    self.entries[entry.key] = entry
+    self.entries[entry.key].add(entry)
     self.entries_in_order.append(entry)
 
   def read_from_zusi(self, f, contexts, strip_shortcuts = False):
@@ -47,7 +52,7 @@ class TranslationFile:
       rightspaces = len(value) - len(value.rstrip(" "))
       value = value.strip(" ")
       leftquote = len(value) > 0 and value[0] == "'"
-      rightquote = len(value) > 1 and value[len(value) - 1] == "'"
+      rightquote = len(value) > 1 and value[-1] == "'"
       value = value.strip("'")
       if strip_shortcuts and ('Caption' in key or 'Text' in key):
         value = re.sub(r'(?<!&)&(?!&)', '', value) # negative lookbehind and lookahead
@@ -55,7 +60,7 @@ class TranslationFile:
         context = contexts[key]
       except KeyError:
         context = ''
-      self.append(TranslationEntry(key, value, context, leftquote, rightquote, leftspaces, rightspaces))
+      self.append(TranslationEntry(key, value, value, context, leftquote, rightquote, leftspaces, rightspaces))
 
     return self
 
@@ -100,6 +105,7 @@ class TranslationFile:
           for entry in entries_under_construction:
             entry.context = current_context
             entry.value = current_value
+            entry.src_value = current_msgid
         entries_under_construction = set()
         current_mode = 0
         current_msgid = ''
@@ -113,6 +119,28 @@ class TranslationFile:
         entry.value = current_value
 
     return self
+
+  def get_translated_entry(self, master_entry):
+    if len(master_entry.value) == 0:
+      return get_empty_string_entry()
+
+    key = master_entry.key.strip()
+    if key not in self.entries:
+      raise TranslationException("Key '%s' not found in PO file (original text: '%s')" %
+          (key, master_entry.value))
+
+    values = self.entries[key]
+    if len(values) == 1:
+      return iter(values).next()
+    else:
+      # Try to resolve ambiguity by looking at the source text
+      matching_entries = dict([(e.value, e) for e in values if e.src_value == master_entry.value])
+      if len(matching_entries) == 1:
+        return matching_entries.values()[0]
+      else:
+        raise TranslationException("Ambiguous translation for key '%s', original text '%s': %s" %
+            (key, master_entry.value, ", ".join(["translation '%s', original text '%s'" %
+                (e.value, e.src_value) for e in matching_entries])))
 
 def escape_po(string):
   return string.replace('"', r'\"')
@@ -140,16 +168,6 @@ def read_shortcut_group_file(f):
       groups.append(cur_set)
       cur_set = set()
   return (groups, key_to_group)
-
-def get_translated_entry(master_entry, po_file):
-  if len(master_entry.value):
-    try:
-      return po_file.entries[master_entry.key.strip()]
-    except KeyError:
-      raise Exception("Key '%s' not found in PO file (original text: '%s')" %
-          (master_entry.key.strip(), master_entry.value))
-  else:
-    return get_empty_string_entry()
 
 def get_shortcut(string):
   """Returns the (lowercased) letter after the first occurrence of '&' that is not followed by a '&'"""
@@ -222,15 +240,15 @@ def generate_shortcuts(master_file, translation_file, shortcut_groups):
     for key in group:
       if ('Caption' not in key and 'Text' not in key) or key not in master_file.entries:
         continue
-      master_entry = master_file.entries[key]
-      shortcut = get_shortcut(master_entry.value)
-      if shortcut is None:
-        continue
-      translated_entry = get_translated_entry(master_entry, translation_file)
-      entries_with_shortcuts.append((translated_entry, shortcut))
-      for char in translated_entry.value.lower():
-        if char != ' ':
-          letterset.add(char)
+      for master_entry  in master_file.entries[key]:
+        shortcut = get_shortcut(master_entry.value)
+        if shortcut is None:
+          continue
+        translated_entry = translation_file.get_translated_entry(master_entry)
+        entries_with_shortcuts.append((translated_entry, shortcut))
+        for char in translated_entry.value.lower():
+          if char != ' ':
+            letterset.add(char)
 
     if not len(entries_with_shortcuts):
       continue
@@ -315,27 +333,22 @@ if __name__ == '__main__':
   if args.mode == 'checkzusi':
     duplicate_key_entries = defaultdict(list)
 
-    for entry in master_file.entries_in_order:
-      if master_file.entries[entry.key] != entry:
-        if entry.key not in duplicate_key_entries:
-          duplicate_key_entries[entry.key].append(master_file.entries[entry.key])
-        duplicate_key_entries[entry.key].append(entry)
-
-    if len(duplicate_key_entries) == 0:
-      print("File is OK.")
-    else:
-      single_source = []
-      multiple_sources = []
-      for key, entries in duplicate_key_entries.items():
+    single_source = []
+    multiple_sources = []
+    for entries in master_file.entries.values():
+      if len(entries) > 1:
         values = set([entry.value for entry in entries])
         (single_source if len(values) == 1 else multiple_sources).append(entries)
 
+    if len(single_source) == 0 and len(multiple_sources) == 0:
+      print("File is OK.")
+    else:
       print("The following keys occur multiple times in the file, but with the same source text:")
       for group in single_source:
-        print("  " + group[0].key + ": '" + group[0].value + "'")
+        print("  " + iter(group).next().key + ": '" + iter(group).next().value + "'")
       print("The following keys occur multiple times in the file with different source text:")
       for group in multiple_sources:
-        print("  " + group[0].key + ": " + ", ".join(["'" + entry.value + "'" for entry in group]))
+        print("  " + iter(group).next().key + ": " + ", ".join(["'" + entry.value + "'" for entry in group]))
 
     sys.exit(0)
 
@@ -404,7 +417,7 @@ if __name__ == '__main__':
       shortcuts = generate_shortcuts(master_file, po_file, args.shortcut_groups)
 
     for master_entry in master_file:
-      translated_entry = get_translated_entry(master_entry, po_file)
+      translated_entry = po_file.get_translated_entry(master_entry)
       value = translated_entry.value
       if args.shortcut_groups and (master_entry.key in shortcuts):
         value = add_shortcut(value, shortcuts[master_entry.key])
