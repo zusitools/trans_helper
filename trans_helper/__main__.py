@@ -167,28 +167,32 @@ class ShortcutGroupFile:
       start = string.find('&', start+1)
     return None
 
-  def get_shortcut_weight(self, string, pos, existing_shortcut = ''):
+  def get_shortcut_weight(self, string, pos, source_shortcut='', existing_shortcut=''):
     # Favor start of a word and uppercase letters
     result = 0
     if pos == 0 or string[pos-1] in " -_+":
       result = 500 if string[pos].upper() == string[pos] else 600
     else:
       result = 700 if string[pos].upper() == string[pos] else 800
-    if existing_shortcut not in "abcdefghijklmnopqrstuvwxyz" and string[pos].lower() == existing_shortcut:
+    if source_shortcut not in "abcdefghijklmnopqrstuvwxyz" and string[pos].lower() == source_shortcut:
+      # Favor "special" source shortcuts
       result -= 500
-    if string[pos].lower() not in "abcdefghijklmnopqrstuvwxyz" + existing_shortcut:
+    if string[pos].lower() not in "abcdefghijklmnopqrstuvwxyz" + source_shortcut:
       # Do not select special characters like '(', ',', ')' if not necessary
       result += 500
+    # Do not change existing translated shortcuts if possible
+    if string[pos].lower()  == existing_shortcut:
+      result = 0
     # Favor positions at the start of the string
     return result + (pos // 10)
 
-  def get_min_shortcut_weight(self, string, char, existing_shortcut):
+  def get_min_shortcut_weight(self, string, char, source_shortcut, existing_shortcut):
     occurrences = []
     start = string.find(char)
     while start != -1:
       occurrences.append(start)
       start = string.find(char, start+1)
-    return 9999 if not len(occurrences) else min(self.get_shortcut_weight(string, pos, existing_shortcut) for pos in occurrences)
+    return 9999 if not len(occurrences) else min(self.get_shortcut_weight(string, pos, source_shortcut, existing_shortcut) for pos in occurrences)
 
   def add_shortcut(self, string, shortcut):
     """Inserts an '&' before an occurrence of 'shortcut' in the specified string and returns the result.
@@ -210,7 +214,7 @@ class ShortcutGroupFile:
       raise Exception('Shortcut %s not found in string %s' % (shortcut, string))
     return string[:position] + '&' + string[position:]
 
-  def generate_shortcuts(self, master_file, translation_file):
+  def generate_shortcuts(self, master_file, translation_file, existing_translation):
     result = {}
 
     # The shortcut generation problem is an instance of the Assignment Problem:
@@ -222,18 +226,23 @@ class ShortcutGroupFile:
 
     for group in self.groups:
       # Find out which entries of the master file have shortcuts at all
-      entries_with_shortcuts = [] # tuple (translated entry, existing shortcut)
+      entries_with_shortcuts = [] # tuple (translated entry, source shortcut, existing shortcut)
       matrix = []
       letterset = set()
       for key in group:
         if ('Caption' not in key and 'Text' not in key) or key not in master_file.entries:
           continue
         for master_entry  in master_file.entries[key]:
-          shortcut = self.get_shortcut(master_entry.value)
-          if shortcut is None:
+          source_shortcut = self.get_shortcut(master_entry.value)
+          if source_shortcut is None:
             continue
           translated_entry = translation_file.get_translated_entry(master_entry)
-          entries_with_shortcuts.append((translated_entry, shortcut))
+          existing_shortcut = None
+          try:
+            existing_shortcut = self.get_shortcut(existing_translation.get_translated_entry(master_entry).value)
+          except TranslationException:
+            pass
+          entries_with_shortcuts.append((translated_entry, source_shortcut, existing_shortcut))
           for char in translated_entry.value.lower():
             if char != ' ':
               letterset.add(char)
@@ -243,16 +252,16 @@ class ShortcutGroupFile:
 
       letterset = sorted(letterset)
 
-      for (entry, existing_shortcut) in entries_with_shortcuts:
+      for (entry, source_shortcut, existing_shortcut) in entries_with_shortcuts:
         value = entry.value.lower()
-        matrix.append([self.get_min_shortcut_weight(value, c, existing_shortcut) for c in letterset])
+        matrix.append([self.get_min_shortcut_weight(value, c, source_shortcut, existing_shortcut) for c in letterset])
 
       from . import munkres
       m = munkres.Munkres()
       indexes = m.compute(matrix)
 
       for (entry_idx, letter_idx) in indexes:
-        (entry, existing_shortcut) = entries_with_shortcuts[entry_idx]
+        (entry, source_shortcut, existing_shortcut) = entries_with_shortcuts[entry_idx]
 
         if matrix[entry_idx][letter_idx] == 9999:
           raise TranslationException("No conflict-free shortcut could be found for %s (translation of key %s)" % (entry.value, entry.key))
@@ -357,9 +366,10 @@ if __name__ == '__main__':
 
     sys.exit(0)
 
-  if args.mode == 'zusi2po':
-    translation_file = TranslationFile().read_from_zusi(args.translation, {})
-  elif args.mode == 'po2zusi':
+  existing_translation = TranslationFile()
+  if (args.translation):
+    existing_translation.read_from_zusi(args.translation, {})
+  if args.mode == 'po2zusi':
     po_file = TranslationFile().read_from_po(args.po_file)
 
   outfile = args.out
@@ -394,7 +404,7 @@ if __name__ == '__main__':
       if args.mode == 'zusi2pot':
         outfile.write('msgstr ""' + os.linesep)
       else:
-        possible_translation_entries = [translation_file[entry.key] for entry in all_entries if entry.key in translation_file]
+        possible_translation_entries = [existing_translation[entry.key] for entry in all_entries if entry.key in existing_translation]
         possible_translations = set([entry.value for entry in possible_translation_entries])
         if len(possible_translations) == 1:
           outfile.write('msgstr "%s"' % escape_po(next(iter(possible_translations))) + os.linesep)
@@ -418,7 +428,7 @@ if __name__ == '__main__':
       outfile.write(os.linesep)
 
   elif args.mode == 'po2zusi':
-    shortcuts_by_key = shortcuts.generate_shortcuts(master_file, po_file)
+    shortcuts_by_key = shortcuts.generate_shortcuts(master_file, po_file, existing_translation)
 
     for master_entry in master_file:
       translated_entry = po_file.get_translated_entry(master_entry)
