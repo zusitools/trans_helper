@@ -438,6 +438,6 @@ if __name__ == '__main__':
       except KeyError:
         pass
       try:
-        outfile.write("%s = %s" % (master_entry.key, value) + os.linesep)
+        outfile.write("%s = %s%s" % (master_entry.key, " " * master_entry.leftspaces if "Streckenvorschau" in master_entry.key else "", value) + os.linesep)
       except UnicodeEncodeError as e:
         raise TranslationException("%s = '%s' cannot be written in the specified output encoding. Error message: %s" % (master_entry.key, value, os.linesep + e.message))
