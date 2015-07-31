@@ -5,6 +5,8 @@ import sys
 import re
 from collections import defaultdict
 
+linesep = '\r\n' # make it Windows compatible
+
 class TranslationException(Exception):
   def __str__(self):
     return repr(self.args[0])
@@ -397,17 +399,17 @@ if __name__ == '__main__':
       del master_entries_by_value[key]
 
       for e in all_entries:
-        outfile.write("#. :src: %s" % e.key + os.linesep)
+        outfile.write("#. :src: %s" % e.key + linesep)
       if len(master_entry.context):
-        outfile.write("msgctxt \"%s\"" % escape_po(master_entry.context) + os.linesep)
-      outfile.write('msgid "%s"' % escape_po(master_entry.value) + os.linesep)
+        outfile.write("msgctxt \"%s\"" % escape_po(master_entry.context) + linesep)
+      outfile.write('msgid "%s"' % escape_po(master_entry.value) + linesep)
       if args.mode == 'zusi2pot':
-        outfile.write('msgstr ""' + os.linesep)
+        outfile.write('msgstr ""' + linesep)
       else:
         possible_translation_entries = [existing_translation[entry.key] for entry in all_entries if entry.key in existing_translation]
         possible_translations = set([entry.value for entry in possible_translation_entries])
         if len(possible_translations) == 1:
-          outfile.write('msgstr "%s"' % escape_po(next(iter(possible_translations))) + os.linesep)
+          outfile.write('msgstr "%s"' % escape_po(next(iter(possible_translations))) + linesep)
         else:
           print("Error: %d translations found for text '%s', context '%s', with the following set of keys:"
               % (len(possible_translations), master_entry.value, master_entry.context))
@@ -423,9 +425,9 @@ if __name__ == '__main__':
           sys.exit(3)
 
       if master_entry.key == '':
-        outfile.write("\"Content-Type: text/plain; charset=UTF-8\\n\"" + os.linesep)
+        outfile.write("\"Content-Type: text/plain; charset=UTF-8\\n\"" + linesep)
 
-      outfile.write(os.linesep)
+      outfile.write(linesep)
 
   elif args.mode == 'po2zusi':
     shortcuts_by_key = shortcuts.generate_shortcuts(master_file, po_file, existing_translation)
@@ -438,6 +440,6 @@ if __name__ == '__main__':
       except KeyError:
         pass
       try:
-        outfile.write("%s = %s%s" % (master_entry.key, " " * master_entry.leftspaces if "Streckenvorschau" in master_entry.key else "", value) + os.linesep)
+        outfile.write("%s = %s%s" % (master_entry.key, " " * master_entry.leftspaces if "Streckenvorschau" in master_entry.key else "", value) + linesep)
       except UnicodeEncodeError as e:
-        raise TranslationException("%s = '%s' cannot be written in the specified output encoding. Error message: %s" % (master_entry.key, value, os.linesep + e.message))
+        raise TranslationException("%s = '%s' cannot be written in the specified output encoding. Error message: %s" % (master_entry.key, value, linesep + e.message))
