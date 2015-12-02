@@ -135,12 +135,12 @@ class TranslationFile:
 
     values = self.entries[key]
     if len(values) == 1:
-      return iter(values).next()
+      return next(iter(values))
     else:
       # Try to resolve ambiguity by looking at the source text
       matching_entries = dict([(e.value, e) for e in values if e.src_value == master_entry.value])
       if len(matching_entries) == 1:
-        return matching_entries.values()[0]
+        return next(iter(matching_entries.values()))
       else:
         raise TranslationException("Ambiguous translation for key '%s', original text '%s': %s" %
             (key, master_entry.value, ", ".join(["translation '%s', original text '%s'" %
