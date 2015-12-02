@@ -316,7 +316,7 @@ if __name__ == '__main__':
       + 'The file must also end with an empty line. '
       + 'If this option is supplied, shortcuts are generated for translations whose source strings '
       + 'contain a keyboard shortcut')
-  parser.add_argument('--out', '-o', type=myargparse.CodecFileType('w'), help='Output file')
+  parser.add_argument('--out', '-o', type=myargparse.CodecFileType('w', deferred=True), help='Output file')
   parser.add_argument('--strip-shortcuts', '-ss', action='store_const', const=True,
       help='zusi2pot/zusi2po: Strip keyboard shortcuts from the Zusi file. Only affects source texts whose key contains "Caption" or "Text"')
 
@@ -374,7 +374,7 @@ if __name__ == '__main__':
   if args.mode == 'po2zusi':
     po_file = TranslationFile().read_from_po(args.po_file)
 
-  outfile = args.out
+  outfile = args.out.open()
   master_entries_by_value = defaultdict(list)
   for entry in master_file:
     master_entries_by_value[(entry.value, entry.context)].append(entry)
