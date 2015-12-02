@@ -239,6 +239,8 @@ class ShortcutGroupFile:
       letterset = set()
       for key in group:
         if ('Caption' not in key and 'Text' not in key) or key not in master_file.entries:
+          # Ampersands are only used for shortcuts in UI element captions. In other, application-internal texts,
+          # it occurs unescaped.
           continue
         for master_entry  in master_file.entries[key]:
           source_shortcut = self.get_shortcut(master_entry.value)
