@@ -1,5 +1,4 @@
 import argparse
-import myargparse
 import os
 import sys
 import re
@@ -296,164 +295,121 @@ def read_context_file(f, contexts):
 def get_empty_string_entry():
   return TranslationEntry("", "", "", False, False, 0, 0)
 
-if __name__ == '__main__':
-  parser = argparse.ArgumentParser(description='Translation helper for Zusi translation files.',
-      epilog='You can optionally specify an encoding argument after a file name, e.g. deutsch.txt@ISO-8859-1. ' +
-          'The encoding defaults to UTF-8.')
-  parser.add_argument('mode', choices=['zusi2pot', 'zusi2po', 'po2zusi', 'checkzusi'],
-      help="Mode to operate in. The following modes are supported: " +
-      " ### zusi2pot: Creates a .pot (PO template) file from the file specified by --master."
-      " ### zusi2po: Creates a .po file using keys and context information from the file specified by --master " +
-        "and translations from the file specified by --translation. This should only be necessary when " +
-        "converting an existing translation project to .po files."
-      " ### po2zusi: Creates a Zusi translation file (.txt) from the PO file specified by --po-file using " +
-        "keys and context information from the file specified by --master")
-  parser.add_argument('--master', '-m', action='append', nargs='+', type=myargparse.CodecFileType('r'),
-      help='Zusi master translation files (deutsch.txt, GleisplanEditor.txt, ...). '
-      + 'These are the files from which translation keys and their order will be taken.'
-      + 'For po2zusi, only one file may be specified.', required=True)
-  parser.add_argument('--translation', '-t', type=myargparse.CodecFileType('r'),
-      help='Existing Zusi translation file of the target language.')
-  parser.add_argument('--po-file', '-p', type=myargparse.CodecFileType('r'),
-      help='Existing PO translation file of the target language.')
-  parser.add_argument('--context', '-c', action='append', nargs='*', type=myargparse.CodecFileType('r'),
-      help='List of context entries (disambiguation of identical source texts).')
-  parser.add_argument('--shortcut-groups', '-s', type=myargparse.CodecFileType('r'),
-      help='List of shortcut groups (translation keys that should not get the same keyboard shortcut). '
-      + 'Each key should be on its own line, and the groups should be separated by an empty line. '
-      + 'The file must also end with an empty line. '
-      + 'If this option is supplied, shortcuts are generated for translations whose source strings '
-      + 'contain a keyboard shortcut')
-  parser.add_argument('--out', '-o', type=myargparse.CodecFileType('w', deferred=True), help='Output file')
-  parser.add_argument('--strip-shortcuts', '-ss', action='store_const', const=True,
-      help='zusi2pot/zusi2po: Strip keyboard shortcuts from the Zusi file. Only affects source texts whose key contains "Caption" or "Text"')
+class TranslationHelper(object):
+  def main(self, args):
+    contexts = {}
+    if args.context is not None:
+      for context_file in args.context:
+        logging.info("Reading context file {}".format(context_file[0].name))
+        read_context_file(context_file[0], contexts)
 
-  args = parser.parse_args()
+    master_file = TranslationFile()
+    for m in args.master:
+      logging.info("Reading master translation file {}".format(m[0].name))
+      master_file.read_from_zusi(m[0], contexts, strip_shortcuts = args.strip_shortcuts)
 
-  if args.mode == 'zusi2po' and args.translation is None:
-    parser.error('Missing existing translation file (--translation/-t)')
-  if args.mode == 'po2zusi' and args.po_file is None:
-    parser.error('Missing existing translation file (--po-file/-p)')
-  if args.mode == 'po2zusi' and len(args.master) != 1:
-    parser.error('Need exactly one master file for po2zusi mode')
-  if args.mode != 'checkzusi' and args.out is None:
-    parser.error('Missing output file name (--out/-o)')
-  if args.strip_shortcuts and args.mode not in ['zusi2pot', 'zusi2po']:
-    parser.error('--strip-shortcuts can only be used with zusi2pot/zusi2po mode')
+    shortcuts = ShortcutGroupFile()
+    if args.shortcut_groups:
+      logging.info("Reading shortcut group file {}".format(args.shortcut_groups.name))
+      shortcuts.read_from_file(args.shortcut_groups)
 
-  contexts = {}
-  if args.context is not None:
-    for context_file in args.context:
-      logging.info("Reading context file {}".format(context_file[0].name))
-      read_context_file(context_file[0], contexts)
+    if args.mode == 'checkzusi':
+      duplicate_key_entries = defaultdict(list)
 
-  master_file = TranslationFile()
-  for m in args.master:
-    logging.info("Reading master translation file {}".format(m[0].name))
-    master_file.read_from_zusi(m[0], contexts, strip_shortcuts = args.strip_shortcuts)
+      single_source = []
+      multiple_sources = []
+      for entries in master_file.entries.values():
+        if len(entries) > 1:
+          values = set([entry.value for entry in entries])
+          (single_source if len(values) == 1 else multiple_sources).append(entries)
 
-  shortcuts = ShortcutGroupFile()
-  if args.shortcut_groups:
-    logging.info("Reading shortcut group file {}".format(args.shortcut_groups.name))
-    shortcuts.read_from_file(args.shortcut_groups)
-
-  if args.mode == 'checkzusi':
-    duplicate_key_entries = defaultdict(list)
-
-    single_source = []
-    multiple_sources = []
-    for entries in master_file.entries.values():
-      if len(entries) > 1:
-        values = set([entry.value for entry in entries])
-        (single_source if len(values) == 1 else multiple_sources).append(entries)
-
-    if len(single_source) == 0 and len(multiple_sources) == 0:
-      print("File is OK.")
-    else:
-      print("The following keys occur multiple times in the file, but with the same source text:")
-      for group in single_source:
-        print("  " + iter(group).next().key + ": '" + iter(group).next().value + "'")
-      print("The following keys occur multiple times in the file with different source text:")
-      for group in multiple_sources:
-        print("  " + iter(group).next().key + ": " + ", ".join(["'" + entry.value + "'" for entry in group]))
-
-    sys.exit(0)
-
-  existing_translation = TranslationFile()
-  if (args.translation):
-    logging.info("Reading existing translation file {}".format(args.translation.name))
-    existing_translation.read_from_zusi(args.translation, {})
-  if args.mode == 'po2zusi':
-    logging.info("Reading PO file {}".format(args.po_file.name))
-    po_file = TranslationFile().read_from_po(args.po_file)
-
-  outfile = args.out.open()
-  logging.info("Writing to output file {}".format(outfile.name))
-  master_entries_by_value = defaultdict(list)
-  for entry in master_file:
-    master_entries_by_value[(entry.value, entry.context)].append(entry)
-
-  if args.mode in ['zusi2pot', 'zusi2po']:
-    # Print the entry for the empty string first
-    master_file.entries_in_order.insert(0, get_empty_string_entry())
-
-    # Keep the ordering of the master file.
-    for master_entry in master_file:
-      key = (master_entry.value, master_entry.context)
-      if key not in master_entries_by_value:
-        # no try + except KeyError here, this is a defaultdict
-        continue
-
-      # Get all entries with the same key and context
-      all_entries = master_entries_by_value[key]
-
-      if not len(all_entries):
-        raise Exception("len(all_entries) == 0: %s" % master_entry)
-
-      del master_entries_by_value[key]
-
-      for e in all_entries:
-        outfile.write("#. :src: %s" % e.key + linesep)
-      if len(master_entry.context):
-        outfile.write("msgctxt \"%s\"" % escape_po(master_entry.context) + linesep)
-      outfile.write('msgid "%s"' % escape_po(master_entry.value) + linesep)
-      if args.mode == 'zusi2pot':
-        outfile.write('msgstr ""' + linesep)
+      if len(single_source) == 0 and len(multiple_sources) == 0:
+        print("File is OK.")
       else:
-        possible_translation_entries = [existing_translation[entry.key] for entry in all_entries if entry.key in existing_translation]
-        possible_translations = set([entry.value for entry in possible_translation_entries])
-        if len(possible_translations) == 1:
-          outfile.write('msgstr "%s"' % escape_po(next(iter(possible_translations))) + linesep)
+        print("The following keys occur multiple times in the file, but with the same source text:")
+        for group in single_source:
+          print("  " + iter(group).next().key + ": '" + iter(group).next().value + "'")
+        print("The following keys occur multiple times in the file with different source text:")
+        for group in multiple_sources:
+          print("  " + iter(group).next().key + ": " + ", ".join(["'" + entry.value + "'" for entry in group]))
+
+      sys.exit(0)
+
+    existing_translation = TranslationFile()
+    if (args.translation):
+      logging.info("Reading existing translation file {}".format(args.translation.name))
+      existing_translation.read_from_zusi(args.translation, {})
+    if args.mode == 'po2zusi':
+      logging.info("Reading PO file {}".format(args.po_file.name))
+      po_file = TranslationFile().read_from_po(args.po_file)
+
+    outfile = args.out.open()
+    logging.info("Writing to output file {}".format(outfile.name))
+    master_entries_by_value = defaultdict(list)
+    for entry in master_file:
+      master_entries_by_value[(entry.value, entry.context)].append(entry)
+
+    if args.mode in ['zusi2pot', 'zusi2po']:
+      # Print the entry for the empty string first
+      master_file.entries_in_order.insert(0, get_empty_string_entry())
+
+      # Keep the ordering of the master file.
+      for master_entry in master_file:
+        key = (master_entry.value, master_entry.context)
+        if key not in master_entries_by_value:
+          # no try + except KeyError here, this is a defaultdict
+          continue
+
+        # Get all entries with the same key and context
+        all_entries = master_entries_by_value[key]
+
+        if not len(all_entries):
+          raise Exception("len(all_entries) == 0: %s" % master_entry)
+
+        del master_entries_by_value[key]
+
+        for e in all_entries:
+          outfile.write("#. :src: %s" % e.key + linesep)
+        if len(master_entry.context):
+          outfile.write("msgctxt \"%s\"" % escape_po(master_entry.context) + linesep)
+        outfile.write('msgid "%s"' % escape_po(master_entry.value) + linesep)
+        if args.mode == 'zusi2pot':
+          outfile.write('msgstr ""' + linesep)
         else:
-          print("Error: %d translations found for text '%s', context '%s', with the following set of keys:"
-              % (len(possible_translations), master_entry.value, master_entry.context))
-          for entry in all_entries:
-            print("  %s" % entry.key)
-          if len(possible_translations) > 0:
-            print("Possible translations:")
-            for possible_translation in possible_translations:
-              print("  '%s'" % possible_translation)
-              for entry in possible_translation_entries:
-                if entry.value == possible_translation:
-                  print("    %s" % entry.key)
-          sys.exit(3)
+          possible_translation_entries = [existing_translation[entry.key] for entry in all_entries if entry.key in existing_translation]
+          possible_translations = set([entry.value for entry in possible_translation_entries])
+          if len(possible_translations) == 1:
+            outfile.write('msgstr "%s"' % escape_po(next(iter(possible_translations))) + linesep)
+          else:
+            print("Error: %d translations found for text '%s', context '%s', with the following set of keys:"
+                % (len(possible_translations), master_entry.value, master_entry.context))
+            for entry in all_entries:
+              print("  %s" % entry.key)
+            if len(possible_translations) > 0:
+              print("Possible translations:")
+              for possible_translation in possible_translations:
+                print("  '%s'" % possible_translation)
+                for entry in possible_translation_entries:
+                  if entry.value == possible_translation:
+                    print("    %s" % entry.key)
+            sys.exit(3)
 
-      if master_entry.key == '':
-        outfile.write("\"Content-Type: text/plain; charset=UTF-8\\n\"" + linesep)
+        if master_entry.key == '':
+          outfile.write("\"Content-Type: text/plain; charset=UTF-8\\n\"" + linesep)
 
-      outfile.write(linesep)
+        outfile.write(linesep)
 
-  elif args.mode == 'po2zusi':
-    shortcuts_by_key = shortcuts.generate_shortcuts(master_file, po_file, existing_translation)
+    elif args.mode == 'po2zusi':
+      shortcuts_by_key = shortcuts.generate_shortcuts(master_file, po_file, existing_translation)
 
-    for master_entry in master_file:
-      translated_entry = po_file.get_translated_entry(master_entry)
-      value = translated_entry.value
-      try:
-        value = shortcuts.add_shortcut(value, shortcuts_by_key[master_entry.key])
-      except KeyError:
-        pass
-      try:
-        outfile.write("%s = %s%s" % (master_entry.key, " " * master_entry.leftspaces if "Streckenvorschau" in master_entry.key else "", value) + linesep)
-      except UnicodeEncodeError as e:
-        raise TranslationException("%s = '%s' cannot be written in the specified output encoding. Error message: %s" % (master_entry.key, value, linesep + e.message))
+      for master_entry in master_file:
+        translated_entry = po_file.get_translated_entry(master_entry)
+        value = translated_entry.value
+        try:
+          value = shortcuts.add_shortcut(value, shortcuts_by_key[master_entry.key])
+        except KeyError:
+          pass
+        try:
+          outfile.write("%s = %s%s" % (master_entry.key, " " * master_entry.leftspaces if "Streckenvorschau" in master_entry.key else "", value) + linesep)
+        except UnicodeEncodeError as e:
+          raise TranslationException("%s = '%s' cannot be written in the specified output encoding. Error message: %s" % (master_entry.key, value, linesep + e.message))
