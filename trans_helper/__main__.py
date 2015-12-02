@@ -5,6 +5,9 @@ import sys
 import re
 from collections import defaultdict
 
+import logging
+logging.basicConfig(level=logging.INFO)
+
 linesep = '\r\n' # make it Windows compatible
 
 class TranslationException(Exception):
@@ -219,6 +222,9 @@ class ShortcutGroupFile:
   def generate_shortcuts(self, master_file, translation_file, existing_translation):
     result = {}
 
+    if len(existing_translation.entries):
+      logging.info("Reusing shortcuts from existing translation as much as possible")
+
     # The shortcut generation problem is an instance of the Assignment Problem:
     # Assign n workers (translated texts) to m jobs (letters) so that the total cost
     # is minimized. The cost is 9999 when the letter does not occur in the text, else
@@ -336,15 +342,18 @@ if __name__ == '__main__':
   contexts = {}
   if args.context is not None:
     for context_file in args.context:
+      logging.info("Reading context file {}".format(context_file[0].name))
       read_context_file(context_file[0], contexts)
 
   master_file = TranslationFile()
   for m in args.master:
+    logging.info("Reading master translation file {}".format(m[0].name))
     master_file.read_from_zusi(m[0], contexts, strip_shortcuts = args.strip_shortcuts)
 
   shortcuts = ShortcutGroupFile()
   if args.shortcut_groups:
-      shortcuts.read_from_file(args.shortcut_groups)
+    logging.info("Reading shortcut group file {}".format(args.shortcut_groups.name))
+    shortcuts.read_from_file(args.shortcut_groups)
 
   if args.mode == 'checkzusi':
     duplicate_key_entries = defaultdict(list)
@@ -370,11 +379,14 @@ if __name__ == '__main__':
 
   existing_translation = TranslationFile()
   if (args.translation):
+    logging.info("Reading existing translation file {}".format(args.translation.name))
     existing_translation.read_from_zusi(args.translation, {})
   if args.mode == 'po2zusi':
+    logging.info("Reading PO file {}".format(args.po_file.name))
     po_file = TranslationFile().read_from_po(args.po_file)
 
   outfile = args.out.open()
+  logging.info("Writing to output file {}".format(outfile.name))
   master_entries_by_value = defaultdict(list)
   for entry in master_file:
     master_entries_by_value[(entry.value, entry.context)].append(entry)
